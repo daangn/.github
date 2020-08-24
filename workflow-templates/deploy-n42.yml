@@ -12,7 +12,7 @@ on:
   push:
     # 태그 기반 배포
     tags:
-    - '**alpha**' # 'alpha' 가 포함된 태그 (alpha 배포)
+    - '*alpha*' # 'alpha' 가 포함된 태그 (alpha 배포)
     # - 'v[0-9]+.[0-9]+.[0-9]+' # 시멘틱 버전 (v0.0.0) 태그 (prod 배포)
 
     # 브랜치 기반 배포 (commit hash 가 태그로 설정 됨)
@@ -43,7 +43,7 @@ jobs:
           refs/tags/*)
             echo ::set-output name=tag::${GITHUB_REF#refs/tags/} ;;
           *)
-            echo ::set-env name=tag::${GITHUB_SHA} ;;
+            echo ::set-output name=tag::${GITHUB_SHA} ;;
         esac
 
   build:
