@@ -1,0 +1,80 @@
+name: Build Dockerfile and push ecr
+
+# 도커 빌드 & ECR 푸시 & hoian-eks 배포를 위한 action 이에요
+# 아직 알파 클러스터에 사용은 불가능해요
+#
+# 'on' 트리거는 사용하시는 배포 방식 [태그, 브랜치] 중에 어떤 것을 사용하셔도 상관 없지만
+# 가능하면 하나만 사용해 주세요
+#
+# 초기 셋업 시 env 항목을 전부 수정 해 주셔야 해요
+
+on:
+  push:
+    # 태그 기반 배포
+    tags:
+    - '**alpha**' # 'alpha' 가 포함된 태그 (alpha 배포)
+    # - 'v[0-9]+.[0-9]+.[0-9]+' # 시멘틱 버전 (v0.0.0) 태그 (prod 배포)
+
+    # 브랜치 기반 배포 (commit hash 가 태그로 설정 됨)
+    branches:
+    - 'release/alpha'
+    # - 'release/prod'
+
+env:
+  DOCKERFILE: 'Dockerfile' # 도커파일 이름
+  DOCKERFILE_PATH: '.' # 도커파일 경로
+  DOCKER_BUILD_OPTS: ''
+  ECR_REGION: 'ap-northeast-2'
+  ECR_URL: '314695318048.dkr.ecr.ap-northeast-2.amazonaws.com' # aws ecr 주소
+  ECR_REPO: 'hoian/hoian-webapp' # ecr 레포지토리 이름
+  HOIAN_EKS_PATH: 'alpha/ap-northeast-2/webapp/kustomization.yaml'
+  HOIAN_EKS_IMAGE: 'webapp'
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set-tag.outputs.tag }}
+    steps:
+    - name: Set Image Tag
+      id: set-tag
+      run: |
+        case ${{ github.ref }} in
+          refs/tags/*)
+            echo ::set-output name=tag::${GITHUB_REF#refs/tags/} ;;
+          *)
+            echo ::set-env name=tag::${GITHUB_SHA} ;;
+        esac
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [tag]
+    env:
+      TAG: ${{ needs.tag.outputs.tag }}
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.ORG_AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.ORG_AWS_SECRET_ACCESS_KEY }}
+        aws-region: $ECR_REGION
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    - name: Build Docker and Push ECR
+      run: |
+        docker build $DOCKER_BUILD_OPTS -t $ECR_URL/$ECR_REPO:$TAG -f $DOCKERFILE $DOCKERFILE_PATH
+        docker push $ECR_URL/$ECR_REPO:$TAG
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [tag, build]
+    env:
+      TAG: ${{ needs.tag.outputs.tag }}
+    steps:
+    - name: Deploy daangn/hoian-eks
+      uses: isbang/sqs-acton@v0.2.0
+      with:
+        sqs-url: https://ap-northeast-2.queue.amazonaws.com/314695318048/infra-admin-deploy
+        message: '{"type": "update-image-tag", "path": "$HOIAN_EKS_PATH", "imageName": "$HOIAN_EKS_IMAGE", "newTag": "$TAG"}'
